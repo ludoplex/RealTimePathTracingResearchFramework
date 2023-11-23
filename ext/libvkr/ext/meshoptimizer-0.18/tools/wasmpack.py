@@ -25,7 +25,7 @@ def stats(buffer):
 	for ch in buffer.read():
 		hist[ch] += 1
 
-	result = [i for i in range(256)]
+	result = list(range(256))
 	result.sort(key=lambda i: hist[i], reverse=True)
 
 	return result

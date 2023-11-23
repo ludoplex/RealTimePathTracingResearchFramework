@@ -21,7 +21,9 @@ try:
         import pyvkr
     have_pyvkr = True
 except Exception as e:
-    print(f"Failed to load pyvkr. This probably means that your blender version is quite old; try a more recent one!")
+    print(
+        "Failed to load pyvkr. This probably means that your blender version is quite old; try a more recent one!"
+    )
     print(e)
     have_pyvkr = False
 

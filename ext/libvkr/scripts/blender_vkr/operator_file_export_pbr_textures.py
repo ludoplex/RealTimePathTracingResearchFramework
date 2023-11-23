@@ -9,8 +9,7 @@ def make_group_input(group, inNode, typeID, name, default_value=None):
     input = group.inputs.new(typeID, name)
     if default_value is not None:
         input.default_value = default_value
-    data_in = inNode.outputs[name]
-    return data_in
+    return inNode.outputs[name]
 
 # adds a new group input and a new group output slot of the same name,
 # connecting the two to pass any data unchanged. returns the new input
@@ -66,8 +65,7 @@ def remap_normal_input(group, inNode, typeID, name, default_normal):
 # principled material roughness is squared before being passed on.
 def remap_roughness_input(group, inNode, typeID, name):
     roughness = make_group_input(group, inNode, typeID, name)
-    proughness = make_group_input(group, inNode, typeID, 'Principled %s' % name)
-    return proughness
+    return make_group_input(group, inNode, typeID, f'Principled {name}')
 
 # adds a group input for index of refraction ad remaps it to the [0, 1] range.
 def remap_ior_input(group, inNode, typeID, name):
@@ -233,21 +231,18 @@ class MaterialExportNode(bpy.types.ShaderNodeCustomGroup):
         for n, s in self.inputs.items():
             if s.is_linked:
                 continue # todo: allow clearing old links?
-            
+
             alternative_names = self.typed_alternative_sockets.get(bsdf.bl_idname, self.alternative_sockets).get(n, None)
             if alternative_names is not None:
                 for an in alternative_names:
-                    if isinstance(an, str):
-                        bsdf_s = bsdf.inputs.get(an, None)
-                    else:
-                        bsdf_s = an(self, bsdf)
+                    bsdf_s = bsdf.inputs.get(an, None) if isinstance(an, str) else an(self, bsdf)
                     if bsdf_s is not None:
                         break
             else:
                 bsdf_s = bsdf.inputs.get(n, None)
             if bsdf_s is None:
                 continue
-            
+
             self.reroute(node_tree, bsdf_s, s)
 
     def init(self, context):
@@ -304,8 +299,7 @@ def generate_object_instances(selected_objects=None):
 def get_active_materials(selected_objects):#, skip_collections=set()):
     active_materials = []
     for o in generate_object_instances(selected_objects):
-        for m in getattr(o.data, 'materials', []):
-            active_materials.append(m)
+        active_materials.extend(iter(getattr(o.data, 'materials', [])))
     return set(active_materials)
 
 def attach_export_nodes(mat):
@@ -317,7 +311,7 @@ def attach_export_nodes(mat):
             export_nodes.append(n)
         elif 'ShaderNodeBsdf' in n.bl_idname or 'ShaderNodeEmission' in n.bl_idname:
             bsdf_nodes.append(n)
-    prev_tracked_bsdfs = set([n.get_target_bsdf() for n in export_nodes])
+    prev_tracked_bsdfs = {n.get_target_bsdf() for n in export_nodes}
     for bsdf in bsdf_nodes:
         if bsdf not in prev_tracked_bsdfs:
             n = mat.node_tree.nodes.new('MaterialExportNode')
@@ -410,7 +404,7 @@ def setup_baking_scene(context, uvmaps):
     if not uvmaps:
         uvmaps = ["uv"]
     uvs = [(0,0), (0, 1), (1, 1), (1,0)]
-    for map_name in uvmaps:
+    for _ in uvmaps:
         uvmap = plane_obj.data.uv_layers.new(name="st")
         for loop in plane_obj.data.loops:
             uv = plane_data.vertices[loop.vertex_index].co[:2]
@@ -453,7 +447,7 @@ class BakedTexturePath:
         material_name = self.material_name if material_name is None else material_name
         texture_name = self.texture_name if texture_name is None else texture_name
         extension = self.extension if extension is None else extension
-        filename = make_filename(f"{material_name}_{texture_name}") + f".{extension}"
+        filename = f'{make_filename(f"{material_name}_{texture_name}")}.{extension}'
         return os.path.join(output_dir, filename)
 
     def __str__(self, output_dir=None, material_name=None, texture_name=None, extension=None):
@@ -472,7 +466,7 @@ def bake_material_texture(output_dir, output_type, context, materials, default_r
         m.blend_method = blend_method
         active_object.data.materials.clear()
         active_object.data.materials.append(m)
-        print('Baking texture %s_%s:' % (material_name, output_type))
+        print(f'Baking texture {material_name}_{output_type}:')
         res_x, res_y = find_resolution(mat=m)
         if res_x == 0:
             print('Warning: Inferred resolution X == 0, defaulting to %d' % default_resolution)
@@ -499,11 +493,11 @@ class MaterialTextureResults:
     pass
 
 def find_uv_map_names(material):
-    map_names = []
-    for node in material.node_tree.nodes:
-        if (isinstance(node, bpy.types.ShaderNodeUVMap)):
-            map_names.append(node.uv_map)
-    return map_names
+    return [
+        node.uv_map
+        for node in material.node_tree.nodes
+        if (isinstance(node, bpy.types.ShaderNodeUVMap))
+    ]
 
 def bake_material_textures(output_dir, context, materials):
     os.makedirs(output_dir, exist_ok=True)
@@ -524,21 +518,20 @@ def bake_material_textures(output_dir, context, materials):
     active_object = context['active_object']
     context = bpy.context.copy()
     context['active_object'] = active_object
-    
+
     results = MaterialTextureResults()
 
     MaterialExportNode.group_output_basecolor(MaterialExportNode.get_group())
     results.base_color = bake_material_texture(output_dir, 'BaseColor', context, materials, output_color_transform='sRGB')
-    
+
     MaterialExportNode.group_output_normal(MaterialExportNode.get_group())
     results.normal = bake_material_texture(output_dir, 'Normal', context, materials)
 
     MaterialExportNode.group_output_reflection(MaterialExportNode.get_group())
     results.specular = bake_material_texture(output_dir, 'Specular', context, materials)
 
-    if True:
-        MaterialExportNode.group_output_transmission(MaterialExportNode.get_group())
-        results.transmission = bake_material_texture(output_dir, 'SpecularTransmission', context, materials)
+    MaterialExportNode.group_output_transmission(MaterialExportNode.get_group())
+    results.transmission = bake_material_texture(output_dir, 'SpecularTransmission', context, materials)
 
     MaterialExportNode.group_output_emission(MaterialExportNode.get_group())
     results.emission = bake_material_texture(output_dir, 'Emission', context, materials, blend_method='BLEND')
@@ -554,6 +547,7 @@ def bake_material_textures(output_dir, context, materials):
 def convert_material_textures(output_dir, baked_results):
     def get_output_file(path, extension="vkt", texture_name=None):
         return path.get_path(output_dir=output_dir, extension=extension, texture_name=texture_name)
+
     for t in baked_results.base_color:
         output_file = get_output_file(t)
         print('Converting to', output_file)
@@ -586,11 +580,7 @@ def convert_material_textures(output_dir, baked_results):
                 print(values)
 
                 ior = values[1] * 2.0 - 1.0
-                if ior > 1.0:
-                    ior = 1.0 / np.sqrt(1.0 - ior)
-                else:
-                    ior = np.sqrt(ior + 1.0)
-
+                ior = 1.0 / np.sqrt(1.0 - ior) if ior > 1.0 else np.sqrt(ior + 1.0)
                 with open(output_file, 'w') as f:
                     f.write('%f\n%f\n%f\n%f' % (values[2], ior, 0.0, values[0]))
 
@@ -609,7 +599,7 @@ def convert_material_textures(output_dir, baked_results):
             bpy.data.images.remove(i)
             i = None
 
-            if np.max(values[0:3]) > 0 and values[3] > 0:
+            if np.max(values[:3]) > 0 and values[3] > 0:
                 print(f" ... {values}")
                 with open(output_file, 'w') as f:
                     f.write('%f\n%f\n%f\n%f' % (values[3], values[0], values[1], values[2]))

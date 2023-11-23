@@ -147,12 +147,13 @@ class MeshData:
             return
         def concat(a):
             return np.concatenate((a(self, 0), *(a(x, 1+i) for i, x in enumerate(append_list))), axis=0)
+
         self.vertices = concat(lambda x, _: x.vertices)
         self.normals = concat(lambda x, _: x.normals)
         self.uvs = concat(lambda x, _: x.uvs)
         self.material_indices = concat(lambda x, _: x.material_indices)
         # Make all meshes have the same blend weight count
-        self.blend_weight_count = max([mesh.blend_weight_count for mesh in append_list])
+        self.blend_weight_count = max(mesh.blend_weight_count for mesh in append_list)
         if self.blend_weight_count > 0:
             self.blend_weights = np.concatenate([
                 np.concatenate(
@@ -184,7 +185,7 @@ class MeshData:
 
     def split(self, separate):
         remainder = MeshData()
-        remainder.name = self.name + '_split'
+        remainder.name = f'{self.name}_split'
         remainder.select(separate, source=self)
         self.select(~separate)
         return remainder
@@ -212,7 +213,7 @@ class MeshData:
         splits = []
         for i in mesh_idcs:
             split = MeshData()
-            split.name = self.name + f'_split{i}'
+            split.name = f'{self.name}_split{i}'
             # todo: this may be a bit inefficient
             split.select(i == new_mesh_idcs, source=self)
             splits.append(split)
@@ -293,6 +294,7 @@ class MeshData:
             self.default_segments()
             return
 
+        tri_counts = []
         if max_index > 0:
             print("Splitting mesh", self.name, "to enforce a maximal material index of", max_index, "(current max is ", material_range_max, ")")
 
@@ -303,8 +305,7 @@ class MeshData:
             mat_idcs = self.material_indices[mat_order]
             seg_idcs = np.zeros_like(mat_idcs, dtype=np.int64)
 
-            tri_counts = list()
-            material_base_idcs = list()
+            material_base_idcs = []
             seg_idx = 0
             begin = 0
             while begin < len(mat_idcs):
@@ -332,12 +333,10 @@ class MeshData:
             self.compute_material_reordering()
             self.apply_reordering()
 
-            tri_counts = list()
             count_from_beginning = np.arange(1, len(self.material_indices), dtype=np.int64)[self.material_indices[1:] != self.material_indices[:-1]]
             if count_from_beginning.shape[0] > 0:
                 tri_counts = [ count_from_beginning[0] ]
-                for n in (count_from_beginning[1:] - count_from_beginning[:-1]):
-                    tri_counts.append(n)
+                tri_counts.extend(iter((count_from_beginning[1:] - count_from_beginning[:-1])))
                 tri_counts.append(len(self.material_indices) - count_from_beginning[-1])
             else:
                 tri_counts = [ len(self.material_indices) ]
@@ -380,7 +379,7 @@ class MeshData:
         for tc in self.segment_triangle_counts:
             idx = tri_idx[tb:tb + tc]
             reorder = reorder_table[tb:tb + tc]
-            assert(idx.dtype == np.int32 or idx.dtype == np.uint32)
+            assert idx.dtype in [np.int32, np.uint32]
             pyvkr.optimize_mesh(idx, np.amin(idx)+tc*3, reorder)
             reorder += tb
             tb += tc
@@ -480,7 +479,7 @@ class SceneData:
                 # transform could potentially be animated, but it is not a
                 # common use case and we choose to assume that it is constant.
                 self.mesh_to_pre_skinning_space = \
-                    self.armature.matrix_world.inverted() @ self.mesh_bobject.matrix_world
+                            self.armature.matrix_world.inverted() @ self.mesh_bobject.matrix_world
 
             # Map instance ids to the transform index.
             self.transform_index = dict()
@@ -496,8 +495,7 @@ class SceneData:
             self.lod_group_name = None
             self.lod = -1
             self.lod_group = 0 # This has to be updated before exporting.
-            match = self.lod_pattern.match(mesh_bobject.name)
-            if match:
+            if match := self.lod_pattern.match(mesh_bobject.name):
                 self.lod_group_name = match.group(1)
                 self.lod = int(match.group(2))
 
@@ -548,7 +546,7 @@ class SceneData:
             return np.linalg.norm((smax-smin) > 1.0e-6)
 
         def any_animated(self):
-            return any([ self.is_animated(i) for i in self.transform_index ])
+            return any(self.is_animated(i) for i in self.transform_index)
 
         def num_instances(self):
             return len(self.transform_index)
@@ -749,7 +747,7 @@ class SceneData:
                     if bobject.name in self.modifiers:
                         bobject.modifiers.remove(self.modifiers[bobject.name])
 
-            object_preprocessors = object_preprocessors + [PreprocSplitEdge()]
+            object_preprocessors += [PreprocSplitEdge()]
 
         self.armature_modifiers = dict()
         if self.export_animation:
@@ -758,17 +756,20 @@ class SceneData:
             which ones were disabled and which object they were responsible
             for so that we can reenable them later.
             """
+
+
             class PreprocDisableArmature:
                 def __init__(self, modifiers):
                     self.modifiers = modifiers
 
                 def apply(self, bobject):
-                    modifiers = [mod for mod in bobject.modifiers \
-                                  if mod.type == "ARMATURE" \
-                                  and mod.show_viewport \
-                                  and mod.object is not None]
-
-                    if len(modifiers) > 0:
+                    if modifiers := [
+                        mod
+                        for mod in bobject.modifiers
+                        if mod.type == "ARMATURE"
+                        and mod.show_viewport
+                        and mod.object is not None
+                    ]:
                         modifiers[0].show_viewport = False
                         self.modifiers[bobject.name] = modifiers[0]
 
@@ -776,7 +777,8 @@ class SceneData:
                     for modifier in self.modifiers.values():
                         modifier.show_viewport = True
 
-            object_preprocessors = object_preprocessors + [PreprocDisableArmature(self.armature_modifiers)]
+
+            object_preprocessors += [PreprocDisableArmature(self.armature_modifiers)]
 
         print("Applying preprocessors ...")
         wm = bpy.context.window_manager
@@ -808,7 +810,11 @@ class SceneData:
 
         self.collect_mesh_instances(objects)
 
-        self.armatures = frozenset([mesh_instances.armature for mesh_instances in self.mesh_instances.values() if mesh_instances.armature is not None])
+        self.armatures = frozenset(
+            mesh_instances.armature
+            for mesh_instances in self.mesh_instances.values()
+            if mesh_instances.armature is not None
+        )
         self.collect_materials()
         self.collect_bones()
         #print(self.meshes)
@@ -940,7 +946,7 @@ class SceneData:
                 instances.mesh_data = None # will be unlinked
                 for i, mesh in enumerate(splits):
                     split_i = copy.copy(instances)
-                    split_i.mesh =  ProceduralMesh(mesh_name + f"_diagonal_split{i}", instances.mesh)
+                    split_i.mesh = ProceduralMesh(f"{mesh_name}_diagonal_split{i}", instances.mesh)
                     split_i.mesh_data = mesh
                     split_instances.append((mesh_name, split_i))
             wm.progress_update(i)
@@ -981,7 +987,7 @@ class SceneData:
             mesh.default_segments()
 
     def segment_by_material(self):
-        print(f"Segmenting meshes by material ...")
+        print("Segmenting meshes by material ...")
         for mesh in self.enumerate_mesh_data():
             mesh.segment_by_material()
 
