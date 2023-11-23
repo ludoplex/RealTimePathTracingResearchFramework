@@ -15,14 +15,14 @@ if len(sys.argv) < 2:
 
 filename = sys.argv[1]
 base,ext = os.path.splitext(filename)
-objfile = base + ".obj"
+objfile = f"{base}.obj"
 
 scene = pyvkr.open_scene(filename)
 
 vertex_offset = 0
 for idx, inst in enumerate(scene["instances"]):
     name = inst["name"]
-    if name == "" or name == "N/A":
+    if name in ["", "N/A"]:
         name = f"instance_{idx}"
 
     meshId = inst["meshId"]
